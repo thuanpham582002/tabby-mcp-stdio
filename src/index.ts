@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { TerminalToolCategory } from './tools/terminal';
 import logger, { LogLevel } from './utils/logger';
 import fs from 'fs';
 import path from 'path';
@@ -37,8 +35,8 @@ const argv = yargs(hideBin(process.argv))
   .alias('help', 'h')
   .parseSync();
 
-// Configuration variables from command line and environment
-const port = process.env.TABBY_MCP_PORT || argv.port;
+// Set environment variable for the forwarding service
+process.env.TABBY_MCP_PORT = String(argv.port);
 
 // Configure logger
 const logLevel = (() => {
@@ -79,36 +77,55 @@ if (loggingEnabled && logFile) {
   }
 }
 
-// Setup functions
-async function createStdioServer() {
-  logger.info('[Bridge] Starting stdio server...');
+// Import StdioServerTransport at the top of the file
 
-  const server = new McpServer({
-    name: "Tabby-Bridge",
-    version: "1.0.0"
-  });
+// Main function to run the client-server bridge
+async function main() {
+  try {
+    // Check if a server script path was provided
+    const serverScriptPath = process.argv[2];
+    if (!serverScriptPath) {
+      logger.error('No server script path provided. Usage: tabby-mcp-stdio <server-script-path>');
+      process.exit(1);
+    }
 
-  // Create terminal tool category
-  const terminalTools = new TerminalToolCategory();
+    // Create a new MCP client
+    const client = new MCPClient();
 
-  // Register all terminal tools
-  terminalTools.mcpTools.forEach(tool => {
-    server.tool(tool.name, tool.description, tool.schema || {}, tool.handler);
-  });
+    // Connect to the specified server
+    await client.connectToServer(serverScriptPath);
 
-  // Connect transport
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+    // Create an MCP server that exposes the tools from the client
+    await client.createMcpServer();
 
-  logger.info('[Bridge] Stdio server started successfully');
-  logger.info(`[Bridge] Connected to main server at http://localhost:${port}`);
+    // Handle cleanup on exit
+    process.on('exit', async () => {
+      await client.disconnect();
+    });
+
+    // Handle signals for graceful shutdown
+    process.on('SIGINT', async () => {
+      logger.info('[Bridge] Received SIGINT, shutting down...');
+      await client.disconnect();
+      process.exit(0);
+    });
+
+    process.on('SIGTERM', async () => {
+      logger.info('[Bridge] Received SIGTERM, shutting down...');
+      await client.disconnect();
+      process.exit(0);
+    });
+
+    logger.info('[Bridge] Client-server bridge is running');
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`[Bridge] Failed to start client-server bridge: ${errorMessage}`);
+    process.exit(1);
+  }
 }
 
-// Start the server
-createStdioServer().catch(error => {
-  logger.error('[Bridge] Failed to start stdio server:', error);
-  process.exit(1);
-});
+// Start the application
+main();
 
 // Handle process exit to close logger
 process.on('exit', () => {
@@ -191,3 +208,136 @@ process.on('SIGTERM', () => {
   logger.info('[Bridge] Received SIGTERM, shutting down...');
   process.exit(0);
 });
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { Tool, CallToolResult } from '@modelcontextprotocol/sdk/types';
+
+class MCPClient {
+  private mcp: Client;
+  private transport: SSEClientTransport | null = null;
+  private tools: Tool[] = [];
+  private server: McpServer | null = null;
+
+  constructor() {
+    this.mcp = new Client({ name: "mcp-client-cli", version: "1.0.0" });
+  }
+
+  /**
+   * Connect to an MCP server and retrieve its tools
+   */
+  async connectToServer(serverScriptPath: string): Promise<void> {
+    try {
+      logger.info(`[Client] Connecting to MCP server at ${serverScriptPath}...`);
+
+      const isJs = serverScriptPath.endsWith(".js");
+      const isPy = serverScriptPath.endsWith(".py");
+      if (!isJs && !isPy) {
+        throw new Error("Server script must be a .js or .py file");
+      }
+
+      // For SSE transport, we need to connect to a server URL
+      // Assuming the server is running on localhost with the port from command line
+      const serverUrl = `http://localhost:${process.env.TABBY_MCP_PORT}/sse`;
+      logger.info(`[Client] Using SSE transport with URL: ${serverUrl}`);
+
+      this.transport = new SSEClientTransport(new URL(serverUrl));
+
+      await this.mcp.connect(this.transport);
+      logger.info(`[Client] Connected to MCP server`);
+
+      const toolsResult = await this.mcp.listTools();
+      this.tools = toolsResult.tools;
+
+      logger.info(
+        `[Client] Retrieved ${this.tools.length} tools from server: ${this.tools.map(({ name }) => name).join(', ')}`
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`[Client] Failed to connect to MCP server: ${errorMessage}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Create an MCP server that exposes the tools retrieved from the client connection
+   */
+  async createMcpServer(): Promise<void> {
+    if (this.tools.length === 0) {
+      throw new Error("No tools available. Connect to a server first.");
+    }
+
+    try {
+      logger.info('[Server] Starting MCP server...');
+
+      this.server = new McpServer({
+        name: "Tabby-Bridge",
+        version: "1.0.0"
+      });
+
+      // Register all tools retrieved from the client
+      for (const tool of this.tools) {
+        logger.debug(`[Server] Registering tool: ${tool.name}`);
+        // Convert the inputSchema to a proper Zod schema
+        // For simplicity, we'll just use an empty schema if the original is complex
+        const schema = {};
+
+        this.server.tool(
+          tool.name,
+          tool.description || '',
+          schema,
+          async (args: any, _extra: any): Promise<CallToolResult> => {
+            try {
+              // Call the tool on the original server through our client connection
+              const result = await this.mcp.callTool({
+                name: tool.name,
+                arguments: args
+              });
+              return result as CallToolResult;
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              logger.error(`[Server] Error calling tool ${tool.name}: ${errorMessage}`);
+              return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+                isError: true
+              };
+            }
+          }
+        );
+      }
+
+      // Connect transport
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
+
+      logger.info('[Server] MCP server started successfully');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`[Server] Failed to start MCP server: ${errorMessage}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Disconnect from the server and clean up resources
+   */
+  async disconnect(): Promise<void> {
+    try {
+      if (this.server) {
+        await this.server.close();
+        this.server = null;
+        logger.info('[Server] MCP server closed');
+      }
+
+      if (this.transport) {
+        await this.transport.close();
+        this.transport = null;
+        logger.info('[Client] Disconnected from MCP server');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to clean up resources: ${errorMessage}`);
+    }
+  }
+}
