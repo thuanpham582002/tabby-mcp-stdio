@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "logFile": "./logs/tabby-error.log",
+  "logLevel": "error"
+}
