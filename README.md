@@ -19,7 +19,7 @@ npm start
 npm start -- --port 3002
 
 # Enable logging to a file
-npm start -- --log-enabled --log-file ./logs/tabby.log
+npm start -- --log-enabled --log-file ~/logs/tabby.log
 
 # Set log level (none, error, info, debug)
 npm start -- --log-enabled --log-level debug
@@ -53,7 +53,7 @@ The bridge supports logging to a file with different log levels. You can enable 
 
 ```bash
 # Enable logging
-npm run toggle-logging -- --enable --log-file ./logs/tabby.log
+npm run toggle-logging -- --enable --log-file ~/logs/tabby.log
 
 # Disable logging
 npm run toggle-logging -- --disable
@@ -68,7 +68,7 @@ npm run toggle-logging -- --status
 After installation, you can also use the global command:
 
 ```bash
-tabby-toggle-logging --enable --log-file ./logs/tabby.log
+tabby-toggle-logging --enable --log-file ~/logs/tabby.log
 ```
 
 The logging configuration is stored in a `.tabby-mcp-logging.json` file in the current directory and can be reloaded without restarting the server.
