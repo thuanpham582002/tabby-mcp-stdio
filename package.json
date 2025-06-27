@@ -1,10 +1,10 @@
 {
   "name": "tabby-mcp-stdio",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Tabby MCP stdio bridge to HTTP tools",
   "main": "dist/index.js",
   "bin": {
-    "tabby-mcp-stdio": "./dist/index.js"
+    "tabby-mcp-stdio": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",

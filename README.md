@@ -2,6 +2,8 @@
 
 This is a bridge server that connects a stdio interface to the HTTP endpoints of Tabby MCP.
 
+> Part of the [Tabby MCP Server](https://github.com/thuanpham582002/tabby-mcp-server) project.
+
 ## Installation
 
 ```bash
@@ -15,7 +17,7 @@ npm run build
 # Start with default settings
 npm start
 
-# Specify a different port for the main Tabby MCP server
+# Specify the same port that the Tabby MCP server is running on
 npm start -- --port 3002
 
 # Enable logging to a file
@@ -23,9 +25,6 @@ npm start -- --log-enabled --log-file ~/logs/tabby.log
 
 # Set log level (none, error, info, debug)
 npm start -- --log-enabled --log-level debug
-
-# Enable long-live mode to keep the process running indefinitely
-npm start -- --long-live
 
 # Get help
 npm start -- --help
@@ -36,7 +35,6 @@ npm start -- --help
 You can also configure the bridge using environment variables:
 
 - `TABBY_MCP_PORT`: Port of the main Tabby MCP server (default: 3001)
-- `TABBY_MCP_LONG_LIVE`: Set to '1' to enable long-live mode
 - `TABBY_LOG_ENABLED`: Set to '1' to enable logging
 - `TABBY_LOG_FILE`: Path to log file
 - `TABBY_LOG_LEVEL`: Log level (none, error, info, debug)
